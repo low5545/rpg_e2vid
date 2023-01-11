@@ -44,7 +44,7 @@ class ImageReconstructor:
         if self.perform_color_reconstruction:
             self.crop_halfres = CropParameters(int(width / 2), int(height / 2),
                                                self.model.num_encoders)
-            for channel in ['R', 'G', 'B', 'W']:
+            for channel in ['R', 'G_TR', 'G_BL', 'B']:
                 self.last_states_for_each_channel[channel] = None
 
         self.event_preprocessor = EventPreprocessor(options)
@@ -70,8 +70,8 @@ class ImageReconstructor:
                 reconstructions_for_each_channel = {}
                 if self.perform_color_reconstruction:
                     events_for_each_channel['R'] = self.crop_halfres.pad(events[:, :, 0::2, 0::2])
-                    events_for_each_channel['G'] = self.crop_halfres.pad(events[:, :, 0::2, 1::2])
-                    events_for_each_channel['W'] = self.crop_halfres.pad(events[:, :, 1::2, 0::2])
+                    events_for_each_channel['G_TR'] = self.crop_halfres.pad(events[:, :, 0::2, 1::2])
+                    events_for_each_channel['G_BL'] = self.crop_halfres.pad(events[:, :, 1::2, 0::2])
                     events_for_each_channel['B'] = self.crop_halfres.pad(events[:, :, 1::2, 1::2])
 
                 # Reconstruct new intensity image for each channel (grayscale + RGBW if color reconstruction is enabled)

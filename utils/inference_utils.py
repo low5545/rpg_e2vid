@@ -398,25 +398,42 @@ def merge_channels_into_color_image(channels):
     with Timer('Merge color channels'):
 
         assert('R' in channels)
-        assert('G' in channels)
-        assert('W' in channels)
+        assert('G_TR' in channels)
+        assert('G_BL' in channels)
         assert('B' in channels)
         assert('grayscale' in channels)
 
         # upsample each channel independently
-        for channel in ['R', 'G', 'W', 'B']:
+        for channel in ['R', 'G_TR', 'G_BL', 'B']:
             channels[channel] = cv2.resize(channels[channel], dsize=None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
 
         # Shift the channels so that they all have the same origin
         channels['B'] = shift_image(channels['B'], dx=1, dy=1)
-        channels['G'] = shift_image(channels['G'], dx=1, dy=0)
-        channels['W'] = shift_image(channels['W'], dx=0, dy=1)
+        channels['G_TR'] = shift_image(channels['G_TR'], dx=1, dy=0)
+        channels['G_BL'] = shift_image(channels['G_BL'], dx=0, dy=1)
+
+        # merge the interpolated, full resolution top-right & bottom-left green
+        # channel images
+        H, W = channels['G_TR'].shape
+        x, y = np.meshgrid(np.arange(W), np.arange(H))
+
+        is_top_right = (x % 2 == 1) & (y % 2 == 0)
+        is_bottom_left = (x % 2 == 0) & (y % 2 == 1)
+        is_others = ~(is_top_right | is_bottom_left)
+
+        channels['G_MEAN'] = cv2.addWeighted(
+            src1=channels['G_TR'], alpha=0.5,
+            src2=channels['G_BL'], beta=0.5,
+            gamma=0.0, dtype=cv2.CV_8U
+        )
+        channels['G'] = np.empty_like(channels['G_TR'])
+        channels['G'][is_top_right] = channels['G_TR'][is_top_right]
+        channels['G'][is_bottom_left] = channels['G_BL'][is_bottom_left]
+        channels['G'][is_others] = channels['G_MEAN'][is_others]
 
         # reconstruct the color image at half the resolution using the reconstructed channels RGBW
         reconstruction_bgr = np.dstack([channels['B'],
-                                        cv2.addWeighted(src1=channels['G'], alpha=0.5,
-                                                        src2=channels['W'], beta=0.5,
-                                                        gamma=0.0, dtype=cv2.CV_8U),
+                                        channels['G'],
                                         channels['R']])
 
         reconstruction_grayscale = channels['grayscale']
