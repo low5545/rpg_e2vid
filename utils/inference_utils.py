@@ -2,7 +2,7 @@ from .util import robust_min, robust_max
 from .path_utils import ensure_dir
 from .timers import Timer, CudaTimer
 from .loading_utils import get_device
-from os.path import join
+from os.path import join, splitext, relpath
 from math import ceil, floor
 from torch.nn import ReflectionPad2d
 import numpy as np
@@ -12,7 +12,11 @@ from collections import deque
 import atexit
 import scipy.stats as st
 import torch.nn.functional as F
-from math import sqrt
+from math import sqrt, pi, atan
+import json
+
+from external.event_nerf.datasets import CameraPose
+from external.event_nerf.trajectories import LinearTrajectory
 
 
 def make_event_preview(events, mode='red-blue', num_bins_to_show=-1):
@@ -170,12 +174,46 @@ class ImageWriter:
             ensure_dir(self.output_folder)
             ensure_dir(join(self.output_folder, self.dataset_name))
             print('Will write images to: {}'.format(join(self.output_folder, self.dataset_name)))
-            self.timestamps_file = open(join(self.output_folder, self.dataset_name, 'timestamps.txt'), 'a')
+            self.transforms_path = join(self.output_folder,
+                                        f"transforms_{self.dataset_name}.json")
 
             if self.save_events:
                 self.event_previews_folder = join(self.output_folder, self.dataset_name, 'events')
                 ensure_dir(self.event_previews_folder)
                 print('Will write event previews to: {}'.format(self.event_previews_folder))
+
+            # initialize transforms
+            camera_calibration_path = join(
+                options.input_file, "camera_calibration.npz"
+            )
+            camera_calibration = np.load(camera_calibration_path)
+            
+            img_width = int(camera_calibration["img_width"])
+            img_height = int(camera_calibration["img_height"])
+            focal_len_x = float(camera_calibration["intrinsics"][0, 0])
+            self.transforms = {
+                "camera_angle_x": 2 * atan((img_width / 2) / focal_len_x),
+                "frames": []
+            }
+
+            # arbitrarily define `self.stepsize`
+            events_path = join(options.input_file, "raw_events.npz")
+            events = np.load(events_path)
+
+            N = int(img_width * img_height * options.num_events_per_pixel)
+            num_events = len(events["polarity"])
+            num_views = round(num_events / N)
+            self.stepsize = 2 * pi / num_views
+
+            # initialize trajectory
+            camera_poses = CameraPose(
+                root_directory=options.input_file,
+                permutation_seed=None,
+                downsampling_factor=options.traj_downsampling_factor,
+                upsampling_factor=1,
+                upsampling_algo="linear"
+            )
+            self.trajectory = LinearTrajectory(camera_poses)
 
             atexit.register(self.__cleanup__)
         else:
@@ -185,20 +223,51 @@ class ImageWriter:
         if not self.output_folder:
             return
 
+        img_index = len(self.transforms["frames"])
         if self.save_events and events is not None:
             event_preview = make_event_preview(events, mode=self.event_display_mode,
                                                num_bins_to_show=self.num_bins_to_show)
             cv2.imwrite(join(self.event_previews_folder,
-                             'events_{:010d}.png'.format(event_tensor_id)), event_preview)
+                             'events_{:d}.png'.format(img_index)), event_preview)
 
         cv2.imwrite(join(self.output_folder, self.dataset_name,
-                         'frame_{:010d}.png'.format(event_tensor_id)), img)
+                         'r_{:d}.png'.format(img_index)), img)
         if stamp is not None:
-            self.timestamps_file.write('{:.18f}\n'.format(stamp))
+            # interpolate the camera pose at the image timestamp
+            timestamp_ns = torch.tensor(
+                stamp * 1e+9, dtype=torch.get_default_dtype()
+            )
+            T_wc_position, T_wc_orientation = self.trajectory(timestamp_ns)
+
+            # convert the camera pose from a common to the OpenGL convention
+            T_CCOMMON_COPENGL_ORIENTATION = torch.tensor(
+                [[1,  0,  0],
+                 [0, -1,  0],
+                 [0,  0, -1]],
+                dtype=T_wc_orientation.dtype
+            )
+            T_w_ccommon_orientation = T_wc_orientation
+            T_w_copengl_orientation = T_w_ccommon_orientation \
+                                      @ T_CCOMMON_COPENGL_ORIENTATION
+            T_wc_orientation = T_w_copengl_orientation
+
+            # convert the camera pose to a homogenous transformation matrix
+            T_wc = torch.eye(4, dtype=T_wc_orientation.dtype)
+            T_wc[:3, :3] = T_wc_orientation
+            T_wc[:3, 3] = T_wc_position
+
+            # append to the transforms
+            self.transforms["frames"].append({
+                "file_path": join(".", self.dataset_name,
+                                  f"r_{img_index}"),
+                "rotation": self.stepsize,
+                "transform_matrix": T_wc.tolist()
+            })
 
     def __cleanup__(self):
         if self.output_folder:
-            self.timestamps_file.close()
+            with open(self.transforms_path, "w") as f:
+                json.dump(self.transforms, f, indent=4)
 
 
 class ImageDisplay:

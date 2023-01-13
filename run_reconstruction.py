@@ -31,6 +31,7 @@ if __name__ == "__main__":
     parser.add_argument('--skipevents', default=0, type=int)
     parser.add_argument('--suboffset', default=0, type=int)
     parser.add_argument('--compute_voxel_grid_on_cpu', dest='compute_voxel_grid_on_cpu', action='store_true')
+    parser.add_argument('--traj_downsampling_factor', dest='traj_downsampling_factor', default=1, type=int)
     parser.set_defaults(compute_voxel_grid_on_cpu=False)
 
     set_inference_options(parser)
