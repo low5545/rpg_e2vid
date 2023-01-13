@@ -10,6 +10,7 @@ import time
 from image_reconstructor import ImageReconstructor
 from options.inference_options import set_inference_options
 
+import os
 
 if __name__ == "__main__":
 
@@ -39,10 +40,20 @@ if __name__ == "__main__":
     # Read sensor size from the first first line of the event file
     path_to_events = args.input_file
 
-    header = pd.read_csv(path_to_events, delim_whitespace=True, header=None, names=['width', 'height'],
-                         dtype={'width': np.int, 'height': np.int},
-                         nrows=1)
-    width, height = header.values[0]
+    input_file_extension = os.path.splitext(args.input_file)[1]
+    is_e2vid = input_file_extension in ( ".txt", ".zip" )
+    if is_e2vid:
+        header = pd.read_csv(path_to_events, delim_whitespace=True, header=None, names=['width', 'height'],
+                             dtype={'width': np.int, 'height': np.int},
+                             nrows=1)
+        width, height = header.values[0]
+    else:
+        camera_calibration_path = os.path.join(
+            args.input_file, "camera_calibration.npz"
+        )
+        camera_calibration = np.load(camera_calibration_path)
+        width = int(camera_calibration["img_width"])
+        height = int(camera_calibration["img_height"])
     print('Sensor size: {} x {}'.format(width, height))
 
     # Load model

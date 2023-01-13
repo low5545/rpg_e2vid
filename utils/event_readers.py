@@ -1,6 +1,6 @@
 import pandas as pd
 import zipfile
-from os.path import splitext
+from os.path import splitext, join
 import numpy as np
 from .timers import Timer
 
@@ -14,18 +14,41 @@ class FixedSizeEventReader:
     def __init__(self, path_to_event_file, num_events=10000, start_index=0):
         print('Will use fixed size event windows with {} events'.format(num_events))
         print('Output frame rate: variable')
-        self.iterator = pd.read_csv(path_to_event_file, delim_whitespace=True, header=None,
-                                    names=['t', 'x', 'y', 'pol'],
-                                    dtype={'t': np.float64, 'x': np.int16, 'y': np.int16, 'pol': np.int16},
-                                    engine='c',
-                                    skiprows=start_index + 1, chunksize=num_events, nrows=None, memory_map=True)
+
+        file_extension = splitext(path_to_event_file)[1]
+        self.is_e2vid = file_extension in ( ".txt", ".zip" )
+        if self.is_e2vid:
+            self.iterator = pd.read_csv(path_to_event_file, delim_whitespace=True, header=None,
+                                        names=['t', 'x', 'y', 'pol'],
+                                        dtype={'t': np.float64, 'x': np.int16, 'y': np.int16, 'pol': np.int16},
+                                        engine='c',
+                                        skiprows=start_index + 1, chunksize=num_events, nrows=None, memory_map=True)
+        else:
+            self.num_events = num_events
+            self.start_index = start_index
+
+            events_path = join(path_to_event_file, "raw_events.npz")
+            self.events = dict(np.load(events_path))
 
     def __iter__(self):
         return self
 
     def __next__(self):
         with Timer('Reading event window from file'):
-            event_window = self.iterator.__next__().values
+            if self.is_e2vid:
+                event_window = self.iterator.__next__().values
+            else:
+                if self.start_index >= len(self.events["polarity"]):
+                    raise StopIteration
+
+                end_index = self.start_index + self.num_events
+                event_window = np.concatenate(
+                    ( self.events["timestamp"][self.start_index:end_index, np.newaxis] / 1e+9,  # ns to s
+                      self.events["position"][self.start_index:end_index, :],
+                      self.events["polarity"][self.start_index:end_index, np.newaxis] ),
+                    axis=1, dtype=np.float64
+                )
+                self.start_index = end_index
         return event_window
 
 
