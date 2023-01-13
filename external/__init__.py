@@ -1,1 +1,1 @@
-from . import e2vid_plus
+from . import e2vid_plus, event_nerf
