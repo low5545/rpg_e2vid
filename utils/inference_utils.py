@@ -187,14 +187,44 @@ class ImageWriter:
                 options.input_file, "camera_calibration.npz"
             )
             camera_calibration = np.load(camera_calibration_path)
-            
+            self.intrinsics = camera_calibration["intrinsics"]
+            self.distortion_params = camera_calibration["distortion_params"]
+            self.distortion_model = camera_calibration["distortion_model"]
             img_width = int(camera_calibration["img_width"])
             img_height = int(camera_calibration["img_height"])
-            focal_len_x = float(camera_calibration["intrinsics"][0, 0])
+
+            if len(self.distortion_params) == 0:
+                self.new_intrinsics = self.intrinsics
+            elif self.distortion_model == "plumb_bob":
+                self.new_intrinsics, roi = cv2.getOptimalNewCameraMatrix(
+                    self.intrinsics, self.distortion_params,
+                    (img_width, img_height), alpha=0
+                )
+                assert (roi == (0, 0, img_width - 1, img_height - 1))
+            elif self.distortion_model == "equidistant":
+                raise NotImplementedError       # TODO
+            elif self.distortion_model == "fov":
+                raise NotImplementedError       # TODO
+            else:
+                raise NotImplementedError
+
             self.transforms = {
-                "camera_angle_x": 2 * atan((img_width / 2) / focal_len_x),
                 "frames": []
             }
+            new_focal_len_x = float(self.new_intrinsics[0, 0])
+            new_focal_len_y = float(self.new_intrinsics[1, 1])
+            new_principal_pt_x = float(self.new_intrinsics[0, 2])
+            new_principal_pt_y = float(self.new_intrinsics[1, 2])
+            if (
+                (new_focal_len_x == new_focal_len_y)
+                and (new_principal_pt_x == (img_width - 1) / 2)
+                and (new_principal_pt_y == (img_height - 1) / 2)
+            ):
+                self.transforms["camera_angle_x"] = (
+                    2 * atan((img_width / 2) / new_focal_len_x)
+                )
+            else:
+                self.transforms["intrinsics"] = self.new_intrinsics.tolist()
 
             # arbitrarily define `self.stepsize`
             events_path = join(options.input_file, "raw_events.npz")
@@ -230,6 +260,19 @@ class ImageWriter:
             cv2.imwrite(join(self.event_previews_folder,
                              'events_{:d}.png'.format(img_index)), event_preview)
 
+        # undistort image & save to disk
+        if len(self.distortion_params) > 0:
+            if self.distortion_model == "plumb_bob":
+                img = cv2.undistort(
+                    img, self.intrinsics, self.distortion_params,
+                    newCameraMatrix=self.new_intrinsics
+                )
+            elif self.distortion_model == "equidistant":
+                raise NotImplementedError       # TODO
+            elif self.distortion_model == "fov":
+                raise NotImplementedError       # TODO
+            else:
+                raise NotImplementedError
         cv2.imwrite(join(self.output_folder, self.dataset_name,
                          'r_{:d}.png'.format(img_index)), img)
         if stamp is not None:
