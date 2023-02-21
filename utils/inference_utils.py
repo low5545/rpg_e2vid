@@ -202,7 +202,13 @@ class ImageWriter:
                 )
                 assert (roi == (0, 0, img_width - 1, img_height - 1))
             elif self.distortion_model == "equidistant":
-                raise NotImplementedError       # TODO
+                self.new_intrinsics = (
+                    cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+                        self.intrinsics, self.distortion_params,
+                        (img_width, img_height), R=np.eye(3, dtype=np.float32),
+                        balance=0
+                    )
+                )
             elif self.distortion_model == "fov":
                 raise NotImplementedError       # TODO
             else:
@@ -268,7 +274,10 @@ class ImageWriter:
                     newCameraMatrix=self.new_intrinsics
                 )
             elif self.distortion_model == "equidistant":
-                raise NotImplementedError       # TODO
+                img = cv2.fisheye.undistortImage(
+                    img, self.intrinsics, self.distortion_params,
+                    Knew=self.new_intrinsics
+                )
             elif self.distortion_model == "fov":
                 raise NotImplementedError       # TODO
             else:
